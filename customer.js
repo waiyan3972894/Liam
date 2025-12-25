@@ -15,7 +15,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// သင်၏ Bot Token နှင့် Chat ID ကို ဤနေရာတွင် ထည့်ပါ
+// သင်၏ Bot Token နှင့် Chat ID
 const BOT_TOKEN = "8509262213:AAHTB8EIG2lLxMPLxQpRiTpEuMSF0G0AYPk"; 
 const CHAT_ID = "7788156126";
 let userData = null;
@@ -110,6 +110,130 @@ window.openOrder = (name, price, id, cat) => {
     document.getElementById('modalCatName').value = cat;
 
     document.getElementById('robuxInputs').style.display = (cat === "Robux") ? "block" : "none";
+    document.getElementById('p_wallet').checked = true;
+    document.getElementById('directPayDetails').style.display = "none";
+    
+    new bootstrap.Modal(document.getElementById('orderModal')).show();
+};
+
+// --- ၄။ Order တင်ခြင်း လုပ်ဆောင်ချက် ---
+document.getElementById('orderForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const payType = document.querySelector('input[name="payType"]:checked').value;
+    const price = Number(document.getElementById('modalItemPrice').value);
+    const prodId = document.getElementById('modalProdId').value;
+    const cat = document.getElementById('modalCatName').value;
+
+    if (payType === "Wallet" && userData.balance < price) return alert("❌ Balance မလုံလောက်ပါ။");
+    
+    const btn = document.getElementById('orderBtn');
+    btn.disabled = true; btn.innerText = "Processing...";
+
+    try {
+        let caption = `🛒 *New Order*\n📦 Item: ${document.getElementById('modalItemName').value}\n💰 Price: ${price} Ks\n💳 Method: ${payType}\n👤 Name: ${document.getElementById('cusName').value}\n📞 Phone: ${document.getElementById('cusPhone').value}\n🎮 Info: ${document.getElementById('gameInfo').value}`;
+        
+        if (cat === "Robux") {
+            caption += `\n\n🔑 *Roblox Account*\nUser: \`${document.getElementById('rbxUser').value}\`\nPass: \`${document.getElementById('rbxPass').value}\``;
+        }
+        caption += `\n💬 TG: ${userData.telegram}`;
+
+        if (payType === "Direct") {
+            const slip = document.getElementById('orderSlip').files[0];
+            if (!slip) throw new Error("ပြေစာပုံ ထည့်ပေးပါ။");
+            const fd = new FormData();
+            fd.append("chat_id", CHAT_ID); fd.append("photo", slip); fd.append("caption", caption); fd.append("parse_mode", "Markdown");
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: fd });
+        } else {
+            await updateDoc(doc(db, "users", auth.currentUser.uid), { balance: increment(-price) });
+            await updateDoc(doc(db, "products", prodId), { stock: increment(-1) });
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                method: "POST", headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: CHAT_ID, text: caption, parse_mode: "Markdown" })
+            });
+        }
+        alert("✅ Order တင်ခြင်း အောင်မြင်ပါသည်။"); location.reload();
+    } catch (err) { alert(err.message); btn.disabled = false; btn.innerText = "Confirm Order"; }
+};
+
+// --- ၅။ Login လုပ်ဆောင်ချက် (သင်အလိုရှိသော Error Message များဖြင့်) ---
+document.getElementById('login-form').onsubmit = (e) => {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const pass = document.getElementById('login-pass').value;
+    const btn = e.target.querySelector('button');
+
+    btn.disabled = true;
+    btn.innerText = "Checking...";
+
+    signInWithEmailAndPassword(auth, email, pass)
+    .catch((err) => {
+        btn.disabled = false;
+        btn.innerText = "Login";
+
+        // Firebase error codes ကို စစ်ဆေးပြီး သင်ပြချင်သော စာသားများပြောင်းခြင်း
+        if (err.code === 'auth/wrong-password') {
+            alert("❌Incorrect Password");
+        } else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-email') {
+            alert("Emailမှားနေသည်။ ပြန်စစ်ပေးပါ");
+        } else {
+            alert("Login ဝင်၍မရပါ။ ပြန်စစ်ပေးပါ။");
+        }
+    });
+};
+
+// --- ၆။ Register လုပ်ဆောင်ချက် ---
+document.getElementById('reg-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('reg-email').value;
+    const pass = document.getElementById('reg-pass').value;
+    const btn = e.target.querySelector('button');
+
+    btn.disabled = true;
+    btn.innerText = "Creating...";
+
+    try {
+        const res = await createUserWithEmailAndPassword(auth, email, pass);
+        await setDoc(doc(db, "users", res.user.uid), { 
+            name: document.getElementById('reg-name').value, 
+            telegram: document.getElementById('reg-tg').value, 
+            balance: 0, 
+            uid: res.user.uid 
+        });
+        alert("✅ အကောင့်ဖွင့်ခြင်း အောင်မြင်ပါသည်။");
+    } catch (err) {
+        btn.disabled = false;
+        btn.innerText = "Create Account";
+        if (err.code === 'auth/email-already-in-use') {
+            alert("❌ အကောင့်ရှိပြီးသားပါ");
+        } else {
+            alert("❌ Error: " + err.message);
+        }
+    }
+};
+
+// --- ၇။ အခြားသော လုပ်ဆောင်ချက်များ ---
+window.filterCat = (cat, btn) => {
+    document.querySelectorAll('#cat-bar .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.product-item').forEach(item => {
+        const itemCat = item.getAttribute('data-category');
+        item.style.display = (cat === "All" || itemCat === cat) ? "block" : "none";
+    });
+};
+
+document.getElementById('logout-btn').onclick = () => signOut(auth);
+
+document.getElementById('depositForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('depBtn'); btn.disabled = true;
+    try {
+        const fd = new FormData();
+        fd.append("chat_id", CHAT_ID); fd.append("photo", document.getElementById('depSlip').files[0]);
+        fd.append("caption", `💰 *Deposit Request*\n💵 Amt: ${document.getElementById('depAmount').value} Ks\n👤 User: ${userData.name}\n🆔 UID: \`${auth.currentUser.uid}\``);
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: "POST", body: fd });
+        alert("တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီးနောက် ငွေဖြည့်ပေးပါမည်။"); location.reload();
+    } catch { alert("Error!"); btn.disabled = false; }
+};
     document.getElementById('p_wallet').checked = true;
     document.getElementById('directPayDetails').style.display = "none";
     
